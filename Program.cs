@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -18,7 +19,7 @@ namespace OpenChronoLauncher
         private static readonly (string Title, string Url)[] FixedTabs =
         {
             ("Box",       "http://box.openchrono.fr/"),
-            ("Transfert Live", "https://openchrono.fr/transfert"),            
+            ("Transfert Live", "https://openchrono.fr/transfert"),
         };
 
         // Couleurs des onglets
@@ -26,7 +27,7 @@ namespace OpenChronoLauncher
         private static readonly Color TabActiveText   = Color.White;
         private static readonly Color TabInactiveBack = Color.FromArgb(235, 237, 240);
         private static readonly Color TabInactiveText = Color.FromArgb(80, 80, 90);
- 
+
         private readonly TabControl _tabs = new()
         {
             Dock     = DockStyle.Fill,
@@ -35,26 +36,26 @@ namespace OpenChronoLauncher
             ItemSize = new Size(160, 40),
             DrawMode = TabDrawMode.OwnerDrawFixed,
         };
- 
+
         // Onglets fixes : tableaux dimensionnés à la création
         private readonly WebView2[] _views   = new WebView2[FixedTabs.Length];
         private readonly bool[]     _started = new bool[FixedTabs.Length];
         private CoreWebView2Environment? _env;
- 
+
         public MainForm()
         {
             Text            = "OpenChrono";
             WindowState     = FormWindowState.Maximized;
             BackColor       = Color.FromArgb(245, 246, 248);
- 
+
             // Icône fenêtre + taskbar : chargée depuis les ressources Win32
             // embarquées dans l'exe par <ApplicationIcon> dans le .csproj.
             // Elle apparaît correctement dans la barre des tâches et Alt+Tab.
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
- 
+
             _tabs.DrawItem             += DrawTab;
             _tabs.SelectedIndexChanged += OnTabChanged;
- 
+
             // Création des onglets fixes
             for (int i = 0; i < FixedTabs.Length; i++)
             {
@@ -63,16 +64,33 @@ namespace OpenChronoLauncher
                 page.Controls.Add(_views[i]);
                 _tabs.TabPages.Add(page);
             }
- 
+
             Controls.Add(_tabs);
- 
+
+            // Barre de statut — version lue depuis l'assembly (définie dans le .csproj)
+            var version   = Assembly.GetExecutingAssembly().GetName().Version;
+            var verString = version is null ? "" : $"v{version.Major}.{version.Minor}.{version.Build}";
+            var statusBar = new StatusStrip { SizingGrip = false, BackColor = Color.FromArgb(235, 237, 240) };
+            statusBar.Items.Add(new ToolStripStatusLabel("OpenChrono Launcher")
+            {
+                ForeColor = Color.FromArgb(130, 130, 140),
+                Font      = new Font("Segoe UI", 8.5F),
+            });
+            statusBar.Items.Add(new ToolStripStatusLabel(verString)
+            {
+                Alignment = ToolStripItemAlignment.Right,
+                ForeColor = Color.FromArgb(130, 130, 140),
+                Font      = new Font("Segoe UI", 8.5F),
+            });
+            Controls.Add(statusBar);
+
             Shown += async (_, _) =>
             {
                 _env = await CreateEnvAsync();
                 await EnsureFixedTabAsync(_tabs.SelectedIndex);
             };
         }
- 
+
         // Changement d'onglet : init paresseuse pour les onglets fixes,
         // les onglets dynamiques (popups) sont déjà chargés.
         private async void OnTabChanged(object? sender, EventArgs e)
@@ -82,19 +100,19 @@ namespace OpenChronoLauncher
             if (idx < FixedTabs.Length)
                 await EnsureFixedTabAsync(idx);
         }
- 
+
         private static Task<CoreWebView2Environment> CreateEnvAsync()
         {
             var args =
                 "--disable-web-security " +
                 "--allow-running-insecure-content " +
                 "--disable-features=BlockInsecurePrivateNetworkRequests";
- 
+
             var options     = new CoreWebView2EnvironmentOptions(args);
             var userDataDir = Path.Combine(Path.GetTempPath(), "OpenChronoLauncher");
             return CoreWebView2Environment.CreateAsync(null, userDataDir, options);
         }
- 
+
         // Initialise un onglet fixe une seule fois
         private async Task EnsureFixedTabAsync(int index)
         {
@@ -103,27 +121,27 @@ namespace OpenChronoLauncher
             _started[index] = true;
             await InitWebView(_views[index], FixedTabs[index].Url);
         }
- 
+
         // Configure un WebView2 et branche l'intercepteur de popups
         private async Task InitWebView(WebView2 web, string url)
         {
             await web.EnsureCoreWebView2Async(_env);
             web.CoreWebView2.Settings.AreDevToolsEnabled = true;
- 
+
             // Intercepte window.open() / target="_blank" → onglet interne
             web.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
- 
+
             web.CoreWebView2.Navigate(url);
         }
- 
+
         // Ouvre les popups dans un nouvel onglet interne (avec ×)
         private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
         {
             e.Handled = true;   // on gère nous-mêmes, WebView2 ne crée pas de fenêtre
- 
+
             var url   = e.Uri;
             var deferral = e.GetDeferral();
- 
+
             // Doit s'exécuter sur le thread UI
             BeginInvoke(async () =>
             {
@@ -136,9 +154,9 @@ namespace OpenChronoLauncher
                     page.Controls.Add(web);
                     _tabs.TabPages.Add(page);
                     _tabs.SelectedTab = page;
- 
+
                     await InitWebView(web, url);
- 
+
                     // Titre → titre réel de la page dès qu'il est disponible
                     web.CoreWebView2.DocumentTitleChanged += (_, _) =>
                     {
@@ -154,7 +172,7 @@ namespace OpenChronoLauncher
                 }
             });
         }
- 
+
         // ---------------------------------------------------------------
         //  Dessin des onglets : arrondis en haut, icône × sur les popups
         // ---------------------------------------------------------------
@@ -162,14 +180,14 @@ namespace OpenChronoLauncher
         {
             var g       = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
- 
+
             var rect    = _tabs.GetTabRect(e.Index);
             bool active = e.Index == _tabs.SelectedIndex;
             bool isDynamic = e.Index >= FixedTabs.Length;
- 
+
             var back = active ? TabActiveBack : TabInactiveBack;
             var fore = active ? TabActiveText : TabInactiveText;
- 
+
             // Fond arrondi en haut (rayon 8 px)
             int r = 8;
             using (var path = new GraphicsPath())
@@ -181,17 +199,17 @@ namespace OpenChronoLauncher
                 using var b = new SolidBrush(back);
                 g.FillPath(b, path);
             }
- 
+
             // Texte (légèrement décalé à gauche si onglet dynamique pour laisser place au ×)
             var textRect = isDynamic
                 ? new Rectangle(rect.X, rect.Y, rect.Width - 22, rect.Height)
                 : rect;
- 
+
             TextRenderer.DrawText(g, _tabs.TabPages[e.Index].Text, _tabs.Font,
                 textRect, fore,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
                 | TextFormatFlags.EndEllipsis);
- 
+
             // Icône × pour les onglets dynamiques
             if (isDynamic)
             {
@@ -202,7 +220,7 @@ namespace OpenChronoLauncher
                 g.DrawLine(closePen, closeRect.Right - 3, closeRect.Top + 3, closeRect.Left + 3, closeRect.Bottom - 3);
             }
         }
- 
+
         // Clic sur × d'un onglet dynamique → fermer
         protected override void OnMouseClick(MouseEventArgs e)
         {
@@ -218,7 +236,7 @@ namespace OpenChronoLauncher
                 }
             }
         }
- 
+
         // F5 = recharger l'onglet actif
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
@@ -226,12 +244,12 @@ namespace OpenChronoLauncher
             {
                 int idx = _tabs.SelectedIndex;
                 WebView2? web = null;
- 
+
                 if (idx < FixedTabs.Length)
                     web = _views[idx];
                 else if (_tabs.SelectedTab?.Controls[0] is WebView2 dyn)
                     web = dyn;
- 
+
                 if (web?.CoreWebView2 is not null)
                 {
                     web.CoreWebView2.Reload();
@@ -240,7 +258,7 @@ namespace OpenChronoLauncher
             }
             return base.ProcessCmdKey(ref msg, keyData);
         }
- 
+
         [STAThread]
         public static void Main()
         {
